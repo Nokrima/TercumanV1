@@ -1,7 +1,3 @@
-"""
-Tercüman v.1 — Oyun İçi Gerçek Zamanlı Altyazı ve Çeviri Sistemi
-Sıfırdan yazıldı: tüm bug-fix'ler + modern UI dahil.
-"""
 
 # ── DPI farkındalığı ────────────────────────────────────────────────────────
 import ctypes
@@ -40,6 +36,13 @@ except ImportError:
     subprocess.run([sys.executable, "-m", "pip", "install", "deep-translator"], check=True)
     from deep_translator import GoogleTranslator  # type: ignore
 
+# ── İsteğe bağlı çeviri kütüphaneleri ──────────────────────────────────────
+try:
+    import google.generativeai as _gemini_lib
+except ImportError:
+    subprocess.run([sys.executable, "-m", "pip", "install", "google-generativeai"], check=True)
+    import google.generativeai as _gemini_lib  # type: ignore
+
 # ── İsteğe bağlı runtime importlar ─────────────────────────────────────────
 try:
     import mss
@@ -54,7 +57,13 @@ except ImportError:
     keyboard = None  # type: ignore
 
 # ── Sabitler ─────────────────────────────────────────────────────────────────
-APP_VERSION = "v.1"
+APP_VERSION = "v.2"
+
+# ── Çeviri motoru sabitleri ───────────────────────────────────────────────────
+TRANSLATION_ENGINES = ["Google Translate", "Gemini AI"]
+# Fallback sırası: Gemini başarısız olursa anında Google'a döner
+TRANSLATION_FALLBACK_ORDER = ["gemini", "google"]
+
 
 LANGUAGES: Dict[str, str] = {
     "Otomatik": "auto", "Türkçe (TR)": "tr", "İngilizce (EN)": "en", "Rusça (RU)": "ru",
@@ -230,8 +239,120 @@ class TextStabilizer:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# OCR MOTORları
+# ÇEVİRİ MOTORU — Google / OpenAI / Claude otomatik fallback
 # ═══════════════════════════════════════════════════════════════════════════════
+
+class TranslationEngine:
+    """
+    Birden fazla çeviri arka ucunu soyutlar.
+    Öncelik sırası: Seçilen motor dener, hata alırsa doğrudan Google'a (fallback) geçer.
+    """
+
+    _MAX_RETRIES   = 2          # Her motor için deneme sayısı
+    _RETRY_DELAY   = 0.4        # saniye
+
+    def __init__(self, app: "App") -> None:
+        self._app = app
+
+    def translate(self, text: str, src: str, tgt: str) -> Tuple[str, str]:
+        selected   = self._app.translation_engine_var.get()
+        order      = self._build_order(selected)
+
+        for engine_key in order:
+            try:
+                result = self._call(engine_key, text, src, tgt)
+                if result and result.strip():
+                    if engine_key != selected:
+                        _log(f"[Çeviri] {selected} başarısız, {engine_key} kullanıldı.", "WARN")
+                    return result.strip(), engine_key
+            except Exception as exc:
+                _log(f"[Çeviri] {engine_key} hatası: {exc}", "WARN")
+                continue
+
+        return text, "google"   # son çare: orijinali göster
+
+    def _build_order(self, selected: str) -> List[str]:
+        full = TRANSLATION_FALLBACK_ORDER[:]    # ["gemini", "google"]
+        if selected in full:
+            full.remove(selected)
+            full.insert(0, selected)
+        return full
+
+    def _call(self, engine_key: str, text: str, src: str, tgt: str) -> str:
+        if engine_key == "google":
+            return self._google(text, src, tgt)
+        elif engine_key == "gemini":
+            return self._gemini(text, src, tgt)
+        return text
+
+    def _google(self, text: str, src: str, tgt: str) -> str:
+        for attempt in range(self._MAX_RETRIES):
+            try:
+                return GoogleTranslator(source=src, target=tgt).translate(text) or text
+            except Exception as exc:
+                if attempt < self._MAX_RETRIES - 1:
+                    time.sleep(self._RETRY_DELAY)
+                else:
+                    raise exc
+        return text
+
+    def _gemini(self, text: str, src: str, tgt: str) -> str:
+        api_key = self._app.gemini_key_var.get().strip()
+        if not api_key:
+            raise ValueError("Gemini API key girilmemiş")
+        if _gemini_lib is None:
+            raise ImportError("google-generativeai paketi kurulu değil")
+
+        _gemini_lib.configure(api_key=api_key)
+        lang_name = self._lang_name(tgt)
+        
+        prompt = (
+            f"You are a professional game translator. Translate the following game dialog text to {lang_name}. "
+            f"Preserve character names, formatting, and line breaks exactly. "
+            f"Understand the context, slang and idioms. Return ONLY the translated text, nothing else.\n\n{text}"
+        )
+        
+        # OYUN ÇEVİRİSİ İÇİN GÜVENLİK FİLTRELERİNİ KAPAT (Şiddet, argo vb. engellenmesin diye)
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+
+        for attempt in range(self._MAX_RETRIES):
+            try:
+                model = _gemini_lib.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(prompt, safety_settings=safety_settings)
+                if response.text:
+                    # Başarılı olursa durum çubuğunu sessizce yeşile çevir (Limit uyarısından çıkış için)
+                    self._app.root.after(0, lambda: getattr(self._app, '_api_status_lbl', None) and self._app._api_status_lbl.configure(text="✓ API Aktif", text_color="#7EE787"))
+                    return response.text.strip()
+                return text
+            except Exception as exc:
+                err_msg = str(exc).lower()
+                # KOTA VEYA LİMİT AŞIMI KONTROLÜ
+                if "429" in err_msg or "quota" in err_msg or "exhausted" in err_msg:
+                    self._app.root.after(0, lambda: getattr(self._app, '_api_status_lbl', None) and self._app._api_status_lbl.configure(text="⚠ API Limiti Doldu", text_color="#DA3633"))
+                
+                if attempt < self._MAX_RETRIES - 1:
+                    time.sleep(self._RETRY_DELAY)
+                else:
+                    raise exc
+        return text
+
+    @staticmethod
+    def _lang_name(code: str) -> str:
+        """Dil kodunu insan okuyabilir isme çevirir (OpenAI/Claude promptu için)."""
+        _MAP = {
+            "tr": "Turkish", "en": "English", "ru": "Russian",
+            "ja": "Japanese", "ko": "Korean", "de": "German",
+            "fr": "French", "zh-CN": "Chinese (Simplified)",
+            "es": "Spanish", "pt": "Portuguese", "it": "Italian",
+            "pl": "Polish",
+        }
+        return _MAP.get(code, code)
+
 
 class EasyOCREngine:
     def __init__(self, use_gpu: bool):
@@ -433,12 +554,12 @@ class HybridOCREngine:
 
     def __init__(self, hybrid_mode_var: "ctk.StringVar") -> None:
         self._win        = WindowsOCREngine("en-US")
-        self._easy: Optional[EasyOCREngine] = None   # lazy
+        self._easy: Optional["EasyOCREngine"] = None   # lazy
         self._mode       = hybrid_mode_var            # "standard" | "aggressive"
         self._easy_lock  = threading.Lock()
 
     # ── EasyOCR lazy yükleme ────────────────────────────────────────────────
-    def _get_easy(self) -> EasyOCREngine:
+    def _get_easy(self) -> "EasyOCREngine":
         with self._easy_lock:
             if self._easy is None:
                 use_gpu = False
@@ -1393,7 +1514,10 @@ class TaskEngine:
                     continue
                 prefixes, dialogs = self._split_speaker(txt)
                 dialog_text = "\n".join(dialogs)
-                result = GoogleTranslator(source=src, target=tgt).translate(dialog_text)
+                
+                # Sabit Google yerine, akıllı TranslationEngine'i kullanıyoruz!
+                result, used_eng = self.app.translator.translate(dialog_text, src, tgt)
+                
                 tr_lines = result.split("\n") if result else dialogs
                 tr = "\n".join(
                     (prefixes[i] if i < len(prefixes) else "") + t
@@ -1401,7 +1525,7 @@ class TaskEngine:
                 )
                 self._cache.put(txt, tr)
                 self.q.put({"a": "waterfall", "t": tr})
-                self.q.put({"a": "tr",        "t": tr})
+                self.q.put({"a": "tr",        "t": tr, "e": used_eng}) # Hangi motorun çalıştığını UI'a gönder
                 self.app.root.after(0, lambda t=tr: self.app._add_to_history(t))
             except Exception as exc:
                 _log(f"[Consumer Çeviri Hatası] {exc}\n{traceback.format_exc()}", "ERROR")
@@ -1513,17 +1637,23 @@ class TaskPanel(ctk.CTkFrame):
             justify="left",
         )
         warn.pack(anchor="w", padx=14, pady=(0, 4))
-# ── Dil Yönü (Altyazı Paneli İçi) ───────────────────────────────────
+        
+        # ── Dil Yönü (Altyazı Paneli İçi) ───────────────────────────────────
+        # DÜZELTME: pack() ve grid() geometri yöneticilerini karıştırma
         lang_row = ctk.CTkFrame(self, fg_color="transparent")
         lang_row.pack(fill="x", padx=14, pady=(6, 8))
+        lang_row.pack_propagate(True)
         
-        lang_row.grid_columnconfigure(0, weight=1)
-        lang_row.grid_columnconfigure(1, weight=0)
-        lang_row.grid_columnconfigure(2, weight=1)
+        # İç çerçeve: grid öğeleri için
+        lang_inner = ctk.CTkFrame(lang_row, fg_color="transparent")
+        lang_inner.pack(fill="x")
+        lang_inner.grid_columnconfigure(0, weight=1)
+        lang_inner.grid_columnconfigure(1, weight=0)
+        lang_inner.grid_columnconfigure(2, weight=1)
 
         # Hatalı olan ComboBox yerine stabil olan OptionMenu kullanıyoruz
         src_menu = ctk.CTkOptionMenu(
-            lang_row, variable=self.app.src_lang_var, values=list(LANGUAGES.keys()),
+            lang_inner, variable=self.app.src_lang_var, values=list(LANGUAGES.keys()),
             fg_color=("gray88", "#161924"), button_color=("gray80", "#21262D"),
             button_hover_color=("gray70", "#30363D"), text_color=("gray20", "#C9D1D9"),
             font=ctk.CTkFont(size=12), dropdown_font=ctk.CTkFont(size=12), height=28
@@ -1539,20 +1669,19 @@ class TaskPanel(ctk.CTkFrame):
                 self.app.tgt_lang_var.set(s)
 
         swap_btn = ctk.CTkButton(
-            lang_row, text="⇄", width=30, height=28, fg_color="transparent",
+            lang_inner, text="⇄", width=30, height=28, fg_color="transparent",
             hover_color=("gray80", "#21262D"), text_color="#58A6FF",
             font=ctk.CTkFont(size=16, weight="bold"), command=_swap_langs
         )
         swap_btn.grid(row=0, column=1)
 
         tgt_menu = ctk.CTkOptionMenu(
-            lang_row, variable=self.app.tgt_lang_var, values=list(TARGET_LANGS.keys()),
+            lang_inner, variable=self.app.tgt_lang_var, values=list(TARGET_LANGS.keys()),
             fg_color=("gray88", "#161924"), button_color=("gray80", "#21262D"),
             button_hover_color=("gray70", "#30363D"), text_color=("gray20", "#C9D1D9"),
             font=ctk.CTkFont(size=12), dropdown_font=ctk.CTkFont(size=12), height=28
         )
         tgt_menu.grid(row=0, column=2, sticky="ew", padx=(4, 0))
-        # ────────────────────────────────────────────────────────────────────
         # ── Bölge bilgisi ────────────────────────────────────────────────────
         self._region_lbl = ctk.CTkLabel(
             self, text="Henüz seçilmedi",
@@ -1627,6 +1756,10 @@ class TaskPanel(ctk.CTkFrame):
                 elif a == "tr":
                     self._tr_lbl.configure(
                         text="TR: "  + (t[:65] + "…" if len(t) > 65 else t or "—"))
+                    # Motor ping efektini tetikle
+                    used_engine = msg.get("e")
+                    if used_engine:
+                        self.app.ping_translation_engine(used_engine)
         except queue.Empty:
             pass
         self.after(33, self._poll)
@@ -1771,7 +1904,34 @@ class TaskPanel(ctk.CTkFrame):
                    font=("Segoe UI", 10), padx=16, pady=4).pack(side=_tk.LEFT, padx=6)
         lb.bind("<Double-Button-1>", lambda _e: _confirm())
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOOLTIP (Bilgi Kutucuğu) Sınıfı
+# ═══════════════════════════════════════════════════════════════════════════════
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tw = None
+        self.widget.bind("<Enter>", self.enter)
+        self.widget.bind("<Leave>", self.leave)
 
+    def enter(self, event=None):
+        x, y, cx, cy = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 20
+        self.tw = _tk.Toplevel(self.widget)
+        self.tw.wm_overrideredirect(True)
+        self.tw.wm_geometry(f"+{x}+{y}")
+        label = _tk.Label(self.tw, text=self.text, justify="left",
+                          background="#1A1F2E", foreground="#E6EDF3",
+                          relief="solid", borderwidth=1,
+                          font=("Segoe UI", 10), padx=8, pady=6)
+        label.pack()
+
+    def leave(self, event=None):
+        if self.tw:
+            self.tw.destroy()
+            self.tw = None
 # ═══════════════════════════════════════════════════════════════════════════════
 # ANA UYGULAMA
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1819,11 +1979,29 @@ class App:
     }
 
     def __init__(self):
+        # ── WINDOWS GÖREV ÇUBUĞU VE SİMGE AYARLARI ──
+        try:
+            # Windows'a bunun standart bir Python betiği değil, bağımsız bir uygulama olduğunu söyler
+            import ctypes
+            myappid = 'TercumanV1.0'  # Benzersiz bir uygulama kimliği
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
         self.root = ctk.CTk()
         self.root.title(f"🎮 Tercüman {APP_VERSION}")
+        
+        # Hazırladığımız icon.ico dosyasını Görev Çubuğuna ve pencereye uygula
+        icon_path = os.path.join(BASE_DIR, "icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.root.iconbitmap(icon_path)
+            except Exception:
+                pass
+
         self.root.geometry("1180x800")
         self.root.resizable(False, False)  # Sabit boyut
 
@@ -1837,6 +2015,19 @@ class App:
         self.font_bold_var  = ctk.BooleanVar(value=True)
         self.engine_var     = ctk.StringVar(value="standard")
         self.hybrid_mode_var= ctk.StringVar(value="standard")  # "standard" | "aggressive"
+
+        # ── YENİ: Çeviri motoru ──────────────────────────────────────────────
+        self.translation_engine_var = ctk.StringVar(value="google")   # google|gemini
+        self.gemini_key_var         = ctk.StringVar(value="")
+        
+        # Çeviri motorunu başlat ve UI referanslarını ayarla
+        self.translator = TranslationEngine(self)
+        self._trans_desc_lbl: Optional[Any] = None
+
+        # ── YENİ: OCR hassasiyet parametreleri ──────────────────────────────
+        self.ocr_quality_thresh_var = ctk.StringVar(value="40")   # HybridOCR quality threshold
+        self.ocr_stab_window_var    = ctk.StringVar(value="6")    # TextStabilizer window
+        self.ocr_stab_thresh_var    = ctk.StringVar(value="0.50") # TextStabilizer Jaccard threshold
 
         # Kurulum iptal/geri alma mekanizması
         self._install_stop  = threading.Event()   # İptal sinyali
@@ -1857,6 +2048,11 @@ class App:
         self._build_ui()
         self._setup_hotkeys()
         self._init_ocr()
+        
+        # Eğer daha önceden kaydedilmiş bir Gemini API anahtarı varsa açılışta sessizce test et
+        if self.gemini_key_var.get().strip():
+            self._test_gemini_key()
+            
         # Ana ekranı göstermeden önce Rastgele Logolu Açılışı başlat
         self._show_splash()
 
@@ -1878,117 +2074,18 @@ class App:
 
     # ── UI İnşası ────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
-        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)  # Sidebar kaldırıldı — main başlıyor col 0
         self.root.grid_rowconfigure(0, weight=1)
 
-        self._build_sidebar()
         self._build_main()
 
     # ── Sol Kenar Çubuğu ─────────────────────────────────────────────────────
-    def _build_sidebar(self) -> None:
-        sb = ctk.CTkFrame(self.root, width=290, corner_radius=0,
-                          fg_color=("gray96", "#0D1117"))
-        sb.grid(row=0, column=0, sticky="nsew")
-        sb.grid_propagate(False)
-        sb.grid_rowconfigure(0, weight=1)
-
-        # Kaydet butonu (her zaman altta)
-        ctk.CTkButton(
-            sb, text="💾  Ayarları Kaydet",
-            fg_color=("#238636", "#238636"), hover_color="#1E7A30",
-            command=self._save_settings,
-        ).pack(side="bottom", fill="x", padx=16, pady=(0, 16))
-
-        # Kaydırılabilir içerik alanı
-        sc = ctk.CTkScrollableFrame(
-            sb, fg_color="transparent",
-            scrollbar_button_color=("gray96", "#0D1117"),
-            scrollbar_button_hover_color=("gray96", "#0D1117")
-        )
-        sc.pack(fill="both", expand=True)
-        sc.grid_columnconfigure(0, weight=1)
-
-        # Başlık
-        ctk.CTkLabel(sc, text="⚙  AYARLAR",
-                     font=ctk.CTkFont(size=15, weight="bold"),
-                     text_color=("gray30", "#58A6FF")).grid(
-                         row=0, column=0, pady=(18, 10), sticky="ew")
-        self._sb_row = 1  # grid satır sayacı
-
-       # ── 4. Kısayollar ─────────────────────────────────────────────────
-        key_content = self._sec_card(sc, "⌨  Kısayollar")
-        
-        # Kısayol Aç/Kapa Anahtarı
-        self._hotkey_toggle_btn = ctk.CTkButton(
-            key_content, text="⌨ Kısayollar: Açık", fg_color="#238636", 
-            hover_color="#1E7A30", height=28, command=self.toggle_hotkeys
-        )
-        self._hotkey_toggle_btn.pack(pady=(4, 6), padx=10, fill="x")
-        
-        hot_box = ctk.CTkFrame(key_content, fg_color=("gray88", "#161924"), corner_radius=8)
-        hot_box.pack(fill="x", padx=10, pady=(4, 8))
-        for act, key in [
-            ("Bölge Seç",       "Ctrl+1"),
-            ("Başlat/Durdur",   "Ctrl+2"),
-            ("Overlay Ortala",  "Ctrl+3"),
-            ("Çıkış",           "Ctrl+Q"),
-        ]:
-            row = ctk.CTkFrame(hot_box, fg_color="transparent")
-            row.pack(fill="x", padx=10, pady=2)
-            ctk.CTkLabel(row, text=act, font=ctk.CTkFont(size=10),
-                         text_color="gray50").pack(side="left")
-            ctk.CTkLabel(row, text=key, font=ctk.CTkFont(size=10, weight="bold"),
-                         fg_color=("gray80", "#21262D"), corner_radius=4,
-                         padx=6).pack(side="right")
-
-    def _sec_card(self, parent: Any, title: str) -> ctk.CTkFrame:
-        """Katlanabilir bölüm — oklara gerek yok, doğrudan başlığa tıklanır."""
-        r = self._sb_row
-
-        # İnce ayırıcı çizgi
-        sep = ctk.CTkFrame(parent, height=1, fg_color=("gray80", "#2D3348"))
-        sep.grid(row=r, column=0, sticky="ew", padx=14, pady=(10, 0))
-
-        # Tıklanabilir başlık çerçevesi
-        hdr = ctk.CTkFrame(parent, fg_color="transparent", cursor="hand2")
-        hdr.grid(row=r + 1, column=0, sticky="ew", padx=14, pady=(6, 2))
-
-        # Doğrudan başlığın kendisi (Oku sildik)
-        title_lbl = ctk.CTkLabel(
-            hdr, text=title, font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("gray40", "#58A6FF"), cursor="hand2"
-        )
-        title_lbl.pack(side="left")
-
-        # İçerik çerçevesi
-        content = ctk.CTkFrame(parent, fg_color="transparent")
-        content.grid(row=r + 2, column=0, sticky="ew")
-        content.grid_columnconfigure(0, weight=1)
-
-        self._sb_row = r + 3
-
-        # Açma/Kapama mantığı
-        def _toggle(_e: Any = None) -> None:
-            if content.winfo_ismapped():
-                content.grid_remove()   # Gizle
-                # Kapalı olduğunu belli etmek için rengi hafif soluklaştır
-                title_lbl.configure(text_color=("gray50", "#8B949E"))
-            else:
-                content.grid()          # Göster
-                # Açıkken vurgulu renk
-                title_lbl.configure(text_color=("gray40", "#58A6FF"))
-
-        # Fare tıklamasını hem çerçeveye hem yazıya bağla
-        hdr.bind("<Button-1>", _toggle)
-        title_lbl.bind("<Button-1>", _toggle)
-        
-        return content
 # ── Ana Alan ─────────────────────────────────────────────────────────────
     def _build_main(self) -> None:
         main = ctk.CTkFrame(self.root, corner_radius=0, fg_color="transparent")
-        main.grid(row=0, column=1, sticky="nsew")
+        main.grid(row=0, column=0, sticky="nsew")  # ← Sidebar kaldırıldı, col=0
         main.grid_rowconfigure(1, weight=1)
-        main.grid_columnconfigure(0, weight=1)
+        main.grid_columnconfigure(0, weight=1)  # 3-sütun grid için başlık
 
         # Üst başlık (hdr BURADA tanımlanıyor)
         hdr = ctk.CTkFrame(main, height=68, corner_radius=0,
@@ -2059,14 +2156,14 @@ class App:
             self._ocr_status.configure(text=txt, text_color=color)
         self.engine_var.trace_add("write", _on_engine_change)
 
-        # Kaydırılabilir içerik
+        # Kaydırılabilir içerik — 3-SÜTUNLU LAYOUT
         scroll = ctk.CTkScrollableFrame(
             main, fg_color="transparent",
             scrollbar_button_color=("gray85", "#242424"),
             scrollbar_button_hover_color=("gray85", "#242424")
         )
         scroll.pack(fill="both", expand=True, padx=22, pady=12)
-        scroll.grid_columnconfigure((0, 1), weight=1)
+        scroll.grid_columnconfigure((0, 1, 2), weight=1)  # 3-SÜTUNLU LAYOUT
 
         # ── Görev kartı ve Altyazı Ayarları (yan yana) ─────────────────────
         self.panel_sub = TaskPanel(scroll, "ALTYAZI", "🎬", self)
@@ -2172,11 +2269,92 @@ class App:
         slider.set(float(self.interval_var.get()))
         slider.pack(fill="x", pady=(8, 0))
 
+        # ── Çeviri Motoru (Translation Service) Kartı (Row 0, Col 2) ──────────────
+        trans_card = ctk.CTkFrame(scroll, fg_color=("white", "#13161F"),
+                                  corner_radius=14, border_width=1,
+                                  border_color=("gray80", "#30363D"))
+        trans_card.grid(row=0, column=2, padx=(8, 0), pady=(0, 12), sticky="nsew")
+
+        # Header
+        hdr_trans = ctk.CTkFrame(trans_card, fg_color="transparent")
+        hdr_trans.pack(fill="x", padx=14, pady=(12, 6))
+        ctk.CTkLabel(hdr_trans, text="🌐  ÇEVİRİ MOTORU",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
+
+        # Description (Durum Bildirici)
+        self._trans_desc_lbl = ctk.CTkLabel(trans_card,
+                                  text="Durum: Bekleniyor...",
+                                  font=ctk.CTkFont(size=11, weight="bold"), text_color="gray50", justify="left")
+        self._trans_desc_lbl.pack(fill="x", padx=14, pady=(0, 8))
+
+        # Service selection buttons
+        btn_frame = ctk.CTkFrame(trans_card, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=14, pady=(0, 12))
+        btn_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        TRANS_SERVICES = [("🔵 Google", "google"), ("🌟 Gemini AI", "gemini")]
+
+        def _select_trans(service):
+            self.translation_engine_var.set(service)
+
+        self._trans_btns: dict = {}
+        
+        # 3 butonluk alanı 2 butona göre hizalayalım
+        btn_frame.grid_columnconfigure((0, 1), weight=1)
+        btn_frame.grid_columnconfigure(2, weight=0) 
+        
+        for idx, (label, svc) in enumerate(TRANS_SERVICES):
+            btn = ctk.CTkButton(
+                btn_frame, text=label, height=32,
+                font=ctk.CTkFont(size=12, weight="bold"),
+                fg_color="#238636" if self.translation_engine_var.get() == svc else "gray40",
+                command=lambda s=svc: _select_trans(s),
+            )
+            btn.grid(row=0, column=idx, padx=4, sticky="ew")
+            self._trans_btns[svc] = btn
+
+        # Auto-save on translation engine change
+        def _on_trans_change(*_):
+            self._save_settings()
+            current = self.translation_engine_var.get()
+            for svc, btn in self._trans_btns.items():
+                btn.configure(fg_color="#238636" if svc == current else "gray40")
+
+        self.translation_engine_var.trace_add("write", _on_trans_change)
+
+        # ── API KEY GİRİŞ ALANI VE LİNK ──
+        import webbrowser
+        api_frame = ctk.CTkFrame(trans_card, fg_color="transparent")
+        api_frame.pack(fill="x", padx=14, pady=(0, 14))
+
+        lbl_frame = ctk.CTkFrame(api_frame, fg_color="transparent")
+        lbl_frame.pack(fill="x")
+        
+        info_lbl = ctk.CTkLabel(lbl_frame, text="Gemini API Key (Opsiyonel):", font=ctk.CTkFont(size=11), text_color="gray50")
+        info_lbl.pack(side="left")
+        
+        # Yeni: Doğrulama Durum Etiketi
+        self._api_status_lbl = ctk.CTkLabel(lbl_frame, text="", font=ctk.CTkFont(size=11, weight="bold"))
+        self._api_status_lbl.pack(side="right", padx=(0, 10))
+
+        # Tıklanabilir Mavi Link
+        link_lbl = ctk.CTkLabel(lbl_frame, text="ℹ Ücretsiz Anahtar Al", font=ctk.CTkFont(size=11, underline=True), text_color="#58A6FF", cursor="hand2")
+        link_lbl.pack(side="right")
+        link_lbl.bind("<Button-1>", lambda e: webbrowser.open("https://aistudio.google.com/app/apikey"))
+        ToolTip(link_lbl, "Google AI Studio'ya gidip Google hesabınızla\ntek tıkla ücretsiz API anahtarı alabilirsiniz.\n(Boş bırakırsanız varsayılan Google kullanılır)")
+
+        self.gemini_entry = ctk.CTkEntry(api_frame, textvariable=self.gemini_key_var, show="*", height=28, placeholder_text="AIzaSy...")
+        self.gemini_entry.pack(fill="x", pady=(4, 8))
+        
+        # Enter'a basıldığında veya kutudan çıkıldığında doğrulamayı çalıştır
+        self.gemini_entry.bind("<Return>", lambda e: self._test_gemini_key())
+        self.gemini_entry.bind("<FocusOut>", lambda e: [self._save_settings(), self._test_gemini_key()])
+
        # ── Motor Seçimi (Animasyonlu Katlanabilir) ─────────────────────────
         eng_card = ctk.CTkFrame(scroll, fg_color=("white", "#13161F"),
                                 corner_radius=14, border_width=1,
                                 border_color=("gray80", "#30363D"))
-        eng_card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        eng_card.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 12))
 
         # 1. Tıklanabilir Başlık Alanı
         eng_hdr = ctk.CTkFrame(eng_card, fg_color="transparent", cursor="hand2")
@@ -2234,13 +2412,13 @@ class App:
                 # Kapanma Modu
                 self.eng_arrow.configure(text="▸")
                 eng_title.configure(text_color=("gray50", "#8B949E"))
-                step = -25 # Kapanma hızı
+                step = -15 # Kapanma hızı
             else:
                 # Açılma Modu
                 self.eng_arrow.configure(text="▾")
                 eng_title.configure(text_color=("gray40", "#58A6FF"))
                 self.eng_content.pack(fill="x", padx=14, pady=(0, 14))
-                step = 25  # Açılma hızı
+                step = 15  # Açılma hızı
 
             def animate():
                 nonlocal current_h
@@ -2262,7 +2440,7 @@ class App:
                 else:
                     # Bir sonraki kareyi (frame) çiz
                     self.eng_content.configure(height=current_h)
-                    self.root.after(12, animate) # ~60fps hissiyatı için 12ms bekleme
+                    self.root.after(7, animate) # ~60fps hissiyatı için 12ms bekleme
 
             animate()
 
@@ -2272,25 +2450,213 @@ class App:
         eng_title.bind("<Button-1>", _toggle_eng)
         # ────────────────────────────────────────────────────────────────────
 
+# ── GELİŞMİŞ OKUMA AYARLARI Kartı (Row 2, Cols 0-2) ─────────────────
+        ocr_sens_card = ctk.CTkFrame(scroll, fg_color=("white", "#13161F"),
+                                     corner_radius=14, border_width=1,
+                                     border_color=("gray80", "#30363D"))
+        ocr_sens_card.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+
+        # 1. Tıklanabilir Başlık Alanı
+        hdr_ocr = ctk.CTkFrame(ocr_sens_card, fg_color="transparent", cursor="hand2")
+        hdr_ocr.pack(fill="x", padx=14, pady=10)
+        
+        self.ocr_arrow = ctk.CTkLabel(hdr_ocr, text="▸", font=ctk.CTkFont(size=16), text_color=("gray50", "#8B949E"), width=20)
+        self.ocr_arrow.pack(side="left")
+
+        ocr_title = ctk.CTkLabel(hdr_ocr, text="🔬  GELİŞMİŞ OKUMA AYARLARI",
+                                 font=ctk.CTkFont(size=13, weight="bold"), text_color=("gray50", "#8B949E"))
+        ocr_title.pack(side="left", padx=4)
+
+        # 2. İçerik Konteyneri (Animasyon için kapalı başlatıyoruz)
+        self.ocr_anim_content = ctk.CTkFrame(ocr_sens_card, fg_color="transparent", height=1)
+        self.ocr_anim_content.pack_propagate(False)
+
+        # Description
+        desc_ocr = ctk.CTkLabel(self.ocr_anim_content,
+                               text="Çeviri hızı ve metin doğruluğu arasındaki dengeyi ince ayarlayın.",
+                               font=ctk.CTkFont(size=11), text_color="gray50", justify="left")
+        desc_ocr.pack(fill="x", padx=14, pady=(0, 8))
+
+        # Content frame
+        ocr_content = ctk.CTkFrame(self.ocr_anim_content, fg_color="transparent")
+        ocr_content.pack(fill="both", expand=True, padx=14, pady=(4, 12))
+        
+        ocr_content.grid_columnconfigure(0, weight=1)
+        ocr_content.grid_columnconfigure(1, weight=0)
+        ocr_content.grid_columnconfigure(2, weight=0)
+
+        # 3. ── Animasyon Mantığı (60 FPS Smooth Slide) ──
+        self._ocr_open = False
+        self._ocr_animating = False
+
+        def _toggle_ocr(_e=None):
+            if self._ocr_animating:
+                return
+            self._ocr_animating = True
+
+            # Hedef yüksekliği otomatik hesapla
+            target_h = ocr_content.winfo_reqheight() + desc_ocr.winfo_reqheight() + 35
+            current_h = self.ocr_anim_content.winfo_height()
+            self.ocr_anim_content.pack_propagate(False)
+
+            if self._ocr_open:
+                # Kapanma Modu
+                self.ocr_arrow.configure(text="▸")
+                ocr_title.configure(text_color=("gray50", "#8B949E"))
+                step = -15
+            else:
+                # Açılma Modu
+                self.ocr_arrow.configure(text="▾")
+                ocr_title.configure(text_color=("gray40", "#58A6FF"))
+                self.ocr_anim_content.pack(fill="x", padx=14, pady=(0, 14))
+                step = 15
+
+            def animate_ocr():
+                nonlocal current_h
+                current_h += step
+                
+                if (step < 0 and current_h <= 1) or (step > 0 and current_h >= target_h):
+                    if step < 0:
+                        self.ocr_anim_content.configure(height=1)
+                        self.ocr_anim_content.pack_forget()
+                        self._ocr_open = False
+                    else:
+                        self.ocr_anim_content.configure(height=target_h)
+                        self.ocr_anim_content.pack_propagate(True)
+                        self._ocr_open = True
+                    self._ocr_animating = False
+                else:
+                    self.ocr_anim_content.configure(height=current_h)
+                    self.root.after(7, animate_ocr)
+
+            animate_ocr()
+
+        # Fare tıklamasını bileşenlere bağla
+        hdr_ocr.bind("<Button-1>", _toggle_ocr)
+        self.ocr_arrow.bind("<Button-1>", _toggle_ocr)
+        ocr_title.bind("<Button-1>", _toggle_ocr)
+
+        # 1. Metin Netlik Sınırı
+        lbl1 = ctk.CTkLabel(ocr_content, text="Metin Netlik Sınırı:", font=ctk.CTkFont(size=11), text_color="gray50")
+        lbl1.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        
+        info1 = ctk.CTkLabel(ocr_content, text="ℹ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#58A6FF", cursor="question_arrow")
+        info1.grid(row=1, column=1, padx=6, pady=(4, 0))
+        ToolTip(info1, "Görüntü kalitesi bu puanın altına düşerse,\nsistem otomatik olarak güçlü (yedek) motora geçer.\n(Düşük: Nadiren geçer / Yüksek: Çabuk geçer)")
+
+        qual_lbl = ctk.CTkLabel(ocr_content, textvariable=self.ocr_quality_thresh_var, font=ctk.CTkFont(size=11, weight="bold"))
+        qual_lbl.grid(row=1, column=2, sticky="e", pady=(4, 0))
+
+        def _on_qual_change(val):
+            self.ocr_quality_thresh_var.set(str(int(float(val))))
+            self._save_settings()
+
+        self._qual_slider = ctk.CTkSlider(ocr_content, from_=30, to=50, number_of_steps=20, command=_on_qual_change)
+        self._qual_slider.set(float(self.ocr_quality_thresh_var.get()))
+        self._qual_slider.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(2, 8))
+
+        # 2. Titreşim Önleyici Hafıza
+        lbl2 = ctk.CTkLabel(ocr_content, text="Titreşim Önleyici (Kare):", font=ctk.CTkFont(size=11), text_color="gray50")
+        lbl2.grid(row=3, column=0, sticky="w", pady=(4, 0))
+        
+        info2 = ctk.CTkLabel(ocr_content, text="ℹ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#58A6FF", cursor="question_arrow")
+        info2.grid(row=3, column=1, padx=6, pady=(4, 0))
+        ToolTip(info2, "Hızlı değişen veya titreyen yazıları sabitlemek\niçin hafızada tutulacak kare sayısını belirler.\n(Düşük: Hızlı tepki / Yüksek: Pürüzsüz yazı)")
+
+        wind_lbl = ctk.CTkLabel(ocr_content, textvariable=self.ocr_stab_window_var, font=ctk.CTkFont(size=11, weight="bold"))
+        wind_lbl.grid(row=3, column=2, sticky="e", pady=(4, 0))
+
+        def _on_wind_change(val):
+            self.ocr_stab_window_var.set(str(int(float(val))))
+            self._save_settings()
+
+        self._wind_slider = ctk.CTkSlider(ocr_content, from_=3, to=9, number_of_steps=6, command=_on_wind_change)
+        self._wind_slider.set(float(self.ocr_stab_window_var.get()))
+        self._wind_slider.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(2, 8))
+
+        # 3. Yeni Cümle Hassasiyeti
+        lbl3 = ctk.CTkLabel(ocr_content, text="Yeni Cümle Hassasiyeti:", font=ctk.CTkFont(size=11), text_color="gray50")
+        lbl3.grid(row=5, column=0, sticky="w", pady=(4, 0))
+
+        info3 = ctk.CTkLabel(ocr_content, text="ℹ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#58A6FF", cursor="question_arrow")
+        info3.grid(row=5, column=1, padx=6, pady=(4, 0))
+        ToolTip(info3, "Ekrana gelen metnin, öncekinden ne kadar\nfarklı olursa 'yeni bir çeviri' sayılacağını belirler.\n(Önerilen: 0.50)")
+
+        jac_lbl = ctk.CTkLabel(ocr_content, textvariable=self.ocr_stab_thresh_var, font=ctk.CTkFont(size=11, weight="bold"))
+        jac_lbl.grid(row=5, column=2, sticky="e", pady=(4, 0))
+
+        def _on_jac_change(val):
+            v = round(float(val), 2)
+            self.ocr_stab_thresh_var.set(str(v))
+            self._save_settings()
+
+        self._jac_slider = ctk.CTkSlider(ocr_content, from_=0.30, to=0.70, number_of_steps=40, command=_on_jac_change)
+        self._jac_slider.set(float(self.ocr_stab_thresh_var.get()))
+        self._jac_slider.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(2, 0))
+
+        # --- HAZIR AYARLAR (PRESETS) --- (KAYDIRMA ÇUBUKLARI OLUŞTUKTAN SONRA)
+        preset_frame = ctk.CTkFrame(ocr_content, fg_color="transparent")
+        preset_frame.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        preset_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        def _set_preset(name, qual, wind, thresh):
+            # 1. Arka plandaki sayısal değerleri kaydet
+            self.ocr_quality_thresh_var.set(str(qual))
+            self.ocr_stab_window_var.set(str(wind))
+            self.ocr_stab_thresh_var.set(str(thresh))
+            self._save_settings()
+            
+            # 2. Üstte oluşturduğumuz çubukları fiziksel olarak o noktaya it
+            self._qual_slider.set(float(qual))
+            self._wind_slider.set(float(wind))
+            self._jac_slider.set(float(thresh))
+
+        presets = [
+            ("🎯 Sabit", 45, 3, "0.60"),
+            ("⚖️ Dengeli", 40, 6, "0.50"),
+            ("⚡ Hızlı", 35, 9, "0.30"),
+        ]
+        for idx, (name, q, w, t) in enumerate(presets):
+            btn = ctk.CTkButton(
+                preset_frame, text=name, height=28,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                fg_color="gray40", hover_color="#238636",
+                command=lambda qu=q, wi=w, th=t: _set_preset(name, qu, wi, th)
+            )
+            btn.grid(row=0, column=idx, padx=2, sticky="ew")
+        # ────────────────────────────────────────────────────────────────────
+
         # ── Çeviri Geçmişi Paneli ──────────────────────────────────────────────
         hist_card = ctk.CTkFrame(scroll, fg_color=("white", "#13161F"),
                                  corner_radius=14, border_width=1,
                                  border_color=("gray80", "#30363D"))
-        hist_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        hist_card.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 12))
 
-        hist_hdr = ctk.CTkFrame(hist_card, fg_color="transparent")
-        hist_hdr.pack(fill="x", padx=16, pady=(12, 6))
-        hist_hdr.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(hist_hdr, text="📜  ÇEVİRİ GEÇMİŞİ",
-                     font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
-        ctk.CTkButton(hist_hdr, text="🗑 Temizle", width=80, height=26,
+        # 1. Tıklanabilir Başlık Alanı
+        hist_hdr = ctk.CTkFrame(hist_card, fg_color="transparent", cursor="hand2")
+        hist_hdr.pack(fill="x", padx=14, pady=10)
+        
+        self.hist_arrow = ctk.CTkLabel(hist_hdr, text="▸", font=ctk.CTkFont(size=16), text_color=("gray50", "#8B949E"), width=20)
+        self.hist_arrow.pack(side="left")
+
+        hist_title = ctk.CTkLabel(hist_hdr, text="📜  ÇEVİRİ GEÇMİŞİ",
+                                  font=ctk.CTkFont(size=13, weight="bold"), text_color=("gray50", "#8B949E"))
+        hist_title.pack(side="left", padx=4)
+
+        # Temizle butonu başlığın sağında dursun (tıklanması menüyü açıp kapatmaz)
+        clear_btn = ctk.CTkButton(hist_hdr, text="🗑 Temizle", width=80, height=26,
                       fg_color="transparent", border_width=1,
                       border_color=("gray75", "#30363D"), text_color="gray60",
                       font=ctk.CTkFont(size=10),
-                      command=self._clear_history).pack(side="right")
+                      command=self._clear_history)
+        clear_btn.pack(side="right")
+
+        # 2. İçerik Konteyneri (Animasyon için kapalı başlatıyoruz)
+        self.hist_anim_content = ctk.CTkFrame(hist_card, fg_color="transparent", height=1)
+        self.hist_anim_content.pack_propagate(False)
 
         self._hist_box = ctk.CTkScrollableFrame(
-            hist_card, height=160, fg_color=("gray97", "#0D1117"), corner_radius=8)
+            self.hist_anim_content, height=160, fg_color=("gray97", "#0D1117"), corner_radius=8)
         self._hist_box.pack(fill="x", padx=14, pady=(0, 14))
 
         self._hist_empty_lbl = ctk.CTkLabel(
@@ -2299,6 +2665,95 @@ class App:
         )
         self._hist_empty_lbl.pack(pady=12)
 
+        # 3. ── Animasyon Mantığı (144 FPS Smooth Slide) ──
+        self._hist_open = False
+        self._hist_animating = False
+
+        def _toggle_hist(_e=None):
+            if self._hist_animating:
+                return
+            self._hist_animating = True
+
+            target_h = 174  # Kutu yüksekliği (160) + Y-Boşluk (14)
+            current_h = self.hist_anim_content.winfo_height()
+            self.hist_anim_content.pack_propagate(False)
+
+            if self._hist_open:
+                # Kapanma Modu
+                self.hist_arrow.configure(text="▸")
+                hist_title.configure(text_color=("gray50", "#8B949E"))
+                step = -15  # Yumuşak adım
+            else:
+                # Açılma Modu
+                self.hist_arrow.configure(text="▾")
+                hist_title.configure(text_color=("gray40", "#58A6FF"))
+                self.hist_anim_content.pack(fill="x", padx=0, pady=0)
+                step = 15
+
+            def animate_hist():
+                nonlocal current_h
+                current_h += step
+                
+                if (step < 0 and current_h <= 1) or (step > 0 and current_h >= target_h):
+                    if step < 0:
+                        self.hist_anim_content.configure(height=1)
+                        self.hist_anim_content.pack_forget()
+                        self._hist_open = False
+                    else:
+                        self.hist_anim_content.configure(height=target_h)
+                        self.hist_anim_content.pack_propagate(True)
+                        self._hist_open = True
+                    self._hist_animating = False
+                else:
+                    self.hist_anim_content.configure(height=current_h)
+                    self.root.after(7, animate_hist)  # 1000ms / 144fps ≈ 7ms hızında kare atlat
+
+            animate_hist()
+
+        # Fare tıklamasını bileşenlere bağla (Temizle butonuna bağlamadık ki karışmasın)
+        hist_hdr.bind("<Button-1>", _toggle_hist)
+        self.hist_arrow.bind("<Button-1>", _toggle_hist)
+        hist_title.bind("<Button-1>", _toggle_hist)
+
+        # ── Kısayollar Kartı (Row 4, Cols 0-2) ────────────────────────────
+        key_card = ctk.CTkFrame(scroll, fg_color=("white", "#13161F"),
+                                corner_radius=14, border_width=1,
+                                border_color=("gray80", "#30363D"))
+        key_card.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+
+        # Header
+        hdr_key = ctk.CTkFrame(key_card, fg_color="transparent")
+        hdr_key.pack(fill="x", padx=16, pady=(12, 6))
+        ctk.CTkLabel(hdr_key, text="⌨  KISAYOLLAR",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
+
+        # Content
+        key_content = ctk.CTkFrame(key_card, fg_color="transparent")
+        key_content.pack(fill="x", padx=14, pady=(0, 14))
+
+        # Toggle button
+        self._hotkey_toggle_btn = ctk.CTkButton(
+            key_content, text="⌨ Hotkeys: Enabled", fg_color="#238636",
+            hover_color="#1E7A30", height=28, command=self.toggle_hotkeys
+        )
+        self._hotkey_toggle_btn.pack(pady=(4, 6), fill="x")
+
+        # Shortcuts box
+        hot_box = ctk.CTkFrame(key_content, fg_color=("gray88", "#161924"), corner_radius=8)
+        hot_box.pack(fill="x", pady=(4, 0))
+        for act, key in [
+            ("Select Region",     "Ctrl+1"),
+            ("Start/Stop",        "Ctrl+2"),
+            ("Center Overlay",    "Ctrl+3"),
+            ("Exit",              "Ctrl+Q"),
+        ]:
+            row = ctk.CTkFrame(hot_box, fg_color="transparent")
+            row.pack(fill="x", padx=10, pady=2)
+            ctk.CTkLabel(row, text=act, font=ctk.CTkFont(size=10),
+                         text_color="gray50").pack(side="left")
+            ctk.CTkLabel(row, text=key, font=ctk.CTkFont(size=10, weight="bold"),
+                         fg_color=("gray80", "#21262D"), corner_radius=4,
+                         padx=6).pack(side="right")
 
     def _make_engine_card(self, parent: Any, key: str, meta: Dict) -> ctk.CTkFrame:
         is_installed = self._check_installed(key)
@@ -2850,6 +3305,13 @@ class App:
             if scale != 1.0:
                 ctk.set_widget_scaling(scale)
                 ctk.set_window_scaling(scale)
+            # Çeviri motoru
+            self.translation_engine_var.set(d.get("translation_engine", "google"))
+            self.gemini_key_var.set(d.get("gemini_key", ""))
+            # OCR hassasiyet
+            self.ocr_quality_thresh_var.set(d.get("ocr_quality_thresh", "40"))
+            self.ocr_stab_window_var.set(d.get("ocr_stab_window", "6"))
+            self.ocr_stab_thresh_var.set(d.get("ocr_stab_thresh", "0.50"))
         except Exception:
             pass
 
@@ -2865,6 +3327,13 @@ class App:
             "engine":      self.engine_var.get(),
             "ui_scale":    self._ui_scale_var.get(),
             "hybrid_mode": self.hybrid_mode_var.get(),
+            # Çeviri motoru
+            "translation_engine": self.translation_engine_var.get(),
+            "gemini_key":         self.gemini_key_var.get(),
+            # OCR hassasiyet
+            "ocr_quality_thresh": self.ocr_quality_thresh_var.get(),
+            "ocr_stab_window":    self.ocr_stab_window_var.get(),
+            "ocr_stab_thresh":    self.ocr_stab_thresh_var.get(),
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -2998,18 +3467,28 @@ class App:
         steps = 20 # Animasyon akıcılığı için adım sayısı
 
         def fade_in(step=0):
+            if not hasattr(self, 'splash') or not self.splash.winfo_exists():
+                return
             if step <= steps:
                 alpha = step / steps
-                self.splash.attributes("-alpha", alpha)
+                try:
+                    self.splash.attributes("-alpha", alpha)
+                except Exception:
+                    return
                 self.root.after(fade_time // steps, lambda: fade_in(step + 1))
             else:
                 # Belirme bitti, ekranda sabit kalması için bekle, sonra kararmaya başla
                 self.root.after(max(0, stay_time), lambda: fade_out(steps))
 
         def fade_out(step=steps):
+            if not hasattr(self, 'splash') or not self.splash.winfo_exists():
+                return
             if step >= 0:
                 alpha = step / steps
-                self.splash.attributes("-alpha", alpha)
+                try:
+                    self.splash.attributes("-alpha", alpha)
+                except Exception:
+                    return
                 self.root.after(fade_time // steps, lambda: fade_out(step - 1))
             else:
                 # Kararma bitti, ekranı kapat
@@ -3023,6 +3502,66 @@ class App:
             self.splash.destroy()
         self.root.deiconify()
         self.root.focus_force()
+    def _test_gemini_key(self) -> None:
+        """Kullanıcının girdiği Gemini API anahtarını arka planda test eder."""
+        key = self.gemini_key_var.get().strip()
+        
+        if not key:
+            self._api_status_lbl.configure(text="")
+            self.gemini_entry.configure(border_color=("gray60", "#30363D"))
+            return
+            
+        # UI'ı test moduna al
+        self._api_status_lbl.configure(text="⏳ Test ediliyor...", text_color="#D29922")
+        self.gemini_entry.configure(border_color="#D29922")
+        
+        def check_key():
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=key)
+                
+                # Sadece modelleri listelemeyi denemek, anahtarın çalışıp çalışmadığını anlamak için yeterlidir
+                list(genai.list_models()) 
+                
+                # Başarılı!
+                self.root.after(0, lambda: self._api_status_lbl.configure(text="✓ Onaylandı", text_color="#7EE787"))
+                self.root.after(0, lambda: self.gemini_entry.configure(border_color="#238636")) # Yeşil çerçeve
+                self._save_settings()
+                
+            except Exception:
+                # Başarısız!
+                self.root.after(0, lambda: self._api_status_lbl.configure(text="✗ Geçersiz Anahtar", text_color="#DA3633"))
+                self.root.after(0, lambda: self.gemini_entry.configure(border_color="#DA3633")) # Kırmızı çerçeve
+                
+        # Programı dondurmamak için ayrı bir iş parçacığında çalıştır
+        import threading
+        threading.Thread(target=check_key, daemon=True).start()
+        
+    def ping_translation_engine(self, engine_key: str) -> None:
+        """Çeviri başarılı olduğunda ilgili motorun butonunu parlatır."""
+        names = {"google": "🔵 Google", "gemini": "🌟 Gemini AI", "cache": "💾 Ön Bellek"}
+        
+        # Durum yazısını güncelle
+        if hasattr(self, "_trans_desc_lbl") and self._trans_desc_lbl.winfo_exists():
+            self._trans_desc_lbl.configure(
+                text=f"Son Çeviri: {names.get(engine_key, engine_key)}", 
+                text_color="#7EE787"
+            )
+            
+        # İlgili butonu bul ve parlat
+        btn = getattr(self, "_trans_btns", {}).get(engine_key)
+        if btn and btn.winfo_exists():
+            btn.configure(fg_color="#00FF88", text_color="black") # Neon Yeşil parlama
+            
+            # 400ms sonra orijinal rengine (Seçili veya Gri) geri dön
+            def revert():
+                if btn.winfo_exists():
+                    is_sel = (self.translation_engine_var.get() == engine_key)
+                    btn.configure(
+                        fg_color="#238636" if is_sel else "gray40", 
+                        text_color="white" if is_sel else ("gray20", "#C9D1D9")
+                    )
+            self.root.after(400, revert)
 
     def quit(self) -> None:
         self._save_settings()

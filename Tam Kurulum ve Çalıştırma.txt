@@ -1,215 +1,147 @@
-========================================================
-  OYUN ÇEVİRİ MOTORU v2.0
-  Kullanım Kılavuzu — Kurulumdan En Verimli Kullanıma
-========================================================
-
+======================================================== 
+OYUN ÇEVİRİ MOTORU v1.0 (Tercüman)
+Kullanım Kılavuzu — Kurulumdan En Verimli Kullanıma
 ─────────────────────────────────────────────────────────
-  BÖLÜM 1: İLK KURULUM (Sıfır Bilgisayar / Format Sonrası)
+BÖLÜM 1: İLK KURULUM (Sıfır Bilgisayar / Format Sonrası)
 ─────────────────────────────────────────────────────────
 
-Bu bölümü yalnızca ilk kez kuruyorsanız okuyun.
+Bu bölümü yalnızca programı ilk kez kuruyorsanız okuyun. TIKLAMA SIRASI:
 
-  TIKLAMA SIRASI:
+Dosyaları bilgisayarınıza çıkartın.
 
-  1. Bu klasörü bilgisayarınıza kopyalayın.
-     (USB, bulut sürücü veya ağ paylaşımından)
+"tam_kurulum.bat" dosyasına sağ tıklayın ve "Yönetici olarak çalıştır"ı seçin.
 
-  2. "tam_kurulum.bat" dosyasına sağ tıklayın.
-     → "Yönetici olarak çalıştır" seçin.
-     → Evet / İzin Ver'e tıklayın.
+Açılan siyah CMD penceresi otomatik olarak şunları yapar:
+a. Gerekli Python kütüphanelerini indirir.
+b. Windows OCR modüllerini sisteme entegre eder.
+c. Kurulum bitince programı otomatik açar.
 
-  3. Siyah CMD penceresi açılır.
-     Otomatik olarak şunları yapar:
-       a. Python 3.11 yüklü değilse indirir ve kurar (~25 MB)
-       b. Gerekli paketleri internetten indirir (~150 MB)
-       c. Windows OCR modüllerini kurar
-       d. Kurulum bitince program otomatik açılır
+İNTERNET BAĞLANTISI GEREKLİDİR.
+TAHMİNİ SÜRE: 1-3 dakika (İnternet hızınıza göre değişir).
 
-  4. İNTERNET BAĞLANTISI GEREKLİDİR.
-     Kurulum internet olmadan yapılamaz.
-
-  TAHMINI SÜRE: 3-10 dakika (internet hızınıza göre değişir)
-
-  NOT: Bu adımları yalnızca bir kere yapmanız yeterlidir.
-       Bir dahaki açılışta sadece "calistir.vbs" kullanın.
-
+NOT: Bu adımları yalnızca bir kere yapmanız yeterlidir. Bir dahaki açılışta sadece "calistir.vbs" (veya kısayolunu) kullanın.
 
 ─────────────────────────────────────────────────────────
-  BÖLÜM 2: HER ZAMANKI KULLANIM
+BÖLÜM 2: HER ZAMANKİ KULLANIM VE SİNEMATİK AÇILIŞ
 ─────────────────────────────────────────────────────────
 
-  TIKLAMA SIRASI:
+"calistir.vbs" dosyasına çift tıklayın.
 
-  1. "calistir.vbs" dosyasına çift tıklayın.
-     CMD penceresi açılmaz. Program doğrudan başlar.
+Ekranda rastgele bir oyun/stüdyo logosu belirecek ve kısa bir açılış sesi çalacaktır (Sürpriz!). Ses bittiğinde ana arayüz pürüzsüzce ekrana gelir.
 
-  2. Program açılırken sağ üstte "Donanım Taranıyor..."
-     yazısı görünür. Bu birkaç saniye sürer.
-     → Yazı "Windows OCR" veya "EasyOCR GPU" olarak
-       değişince sistem hazır demektir.
-
-  3. Oyununuzu başlatın ve arka planda bırakın.
-
+Program açılırken sağ üstte "🔍 Donanım Taranıyor..." yazısı görünür.
+→ Yazı "Windows OCR — Hazır" veya "EasyOCR GPU — Hazır" olarak değişince sistem çeviriye hazır demektir.
 
 ─────────────────────────────────────────────────────────
-  BÖLÜM 3: ALTYAZI BÖLGE SEÇİMİ
+BÖLÜM 3: ÇEVİRİYİ BAŞLATMA (BÖLGE SEÇİMİ)
 ─────────────────────────────────────────────────────────
 
-  En önemli adım — doğru bölge seçilmezse çeviri çalışmaz.
+En önemli adım — doğru bölge seçilmezse motor yazıları okuyamaz.
 
-  TIKLAMA SIRASI:
+A. STANDART BÖLGE SEÇİMİ (Tam Ekran veya Kenarlıksız Pencereli Oyunlar İçin)
 
-  1. Oyununuzu başlatın.
-  2. Altyazının göründüğü bir sahneye gelin ve DONDURUN
-     (örn: bir diyalogda, pause menüsünde)
-  3. Klavyeden Ctrl+1 tuşuna basın.
-     → Ekran kararır ve imleç değişir.
-  4. Farenizi altyazının etrafına sürükleyerek seçim yapın.
-     → Altyazının biraz dışından başlayıp biraz içeride bitirin.
-     → Çok geniş seçim yapmaktan kaçının (OCR gürültü okur)
-  5. Ctrl+2 ile çeviriyi başlatın.
+Oyununuzu başlatın ve altyazının göründüğü bir sahnede dondurun.
 
-  İPUCU: Altyazı alanı değiştiyse Ctrl+1 ile yeniden seçin.
+Klavyeden Ctrl+1 tuşuna basın (veya arayüzden "📍 Bölge Seç"e tıklayın).
+→ Ekran kararır ve imleç değişir.
 
+Farenizin sol tuşuna basılı tutarak altyazının etrafına bir kutu çizin.
+→ İPUCU: Seçimi metnin sınırlarından biraz daha geniş yapın. (Yanlış yaparsanız Sağ Tık veya ESC ile iptal edebilirsiniz).
 
-─────────────────────────────────────────────────────────
-  BÖLÜM 4: KISA YOL TUŞLARI
-─────────────────────────────────────────────────────────
+Ctrl+2 tuşuna basarak (veya "▶ Başlat" diyerek) çeviriyi başlatın. Altyazılar şelale (waterfall) mantığıyla ekranın altında belirecektir.
 
-  Ctrl+1  → Altyazı bölgesi seç (ekran tarama alanı)
-  Ctrl+2  → Çeviriyi Başlat / Durdur
-  Ctrl+3  → Altyazı overlay'ini ekran ortasına sıfırla
-  Ctrl+4  → İkinci bölge (HUD/bilgi metni) seç
-  Ctrl+5  → İkinci bölgeyi Başlat / Durdur
-  Ctrl+Q  → Programı kapat
+B. AKILLI PENCERE TAKİBİ (Pencereli Modda Oynayanlar İçin)
 
+Oyununuz pencereli moddaysa arayüzdeki "🎯 Pencere Takip" butonuna tıklayın.
+
+Açılan listeden oyununuzun penceresini seçin.
+
+Artık oyun penceresini ekranın neresine sürüklerseniz sürükleyin, çeviri motoru ve altyazı okuma alanı oyununuzu otomatik olarak takip edecektir!
 
 ─────────────────────────────────────────────────────────
-  BÖLÜM 5: KENAR ÇUBUĞU AYARLARI (Sol Panel)
+BÖLÜM 4: ARAYÜZ VE AYARLAR
 ─────────────────────────────────────────────────────────
 
-  Tüm başlıklara tıklanarak açılıp kapatılabilir.
+┌─ ANA KONTROL PANELİ (Sol Taraf) ──────────────────────┐
+│ • Dil Yönü: Kaynak ve Hedef dili açılır menüden seçin.│
+│   Ortadaki "⇄" (Swap) tuşu ile dilleri anında         │
+│   yer değiştirebilirsiniz.                            │
+│ • Önizleme: Ekranda okunan metni (OCR) ve çevirisini  │
+│   (TR) anlık olarak buradan takip edebilirsiniz.      │
+└───────────────────────────────────────────────────────┘
 
-  ┌─ DİL YÖ NÜ ─────────────────────────────────────────┐
-  │  Kaynak Dil  : Oyundaki yazıların dili               │
-  │               Çoğu oyun için "İngilizce (EN)"        │
-  │  Hedef Dil   : Çevrilecek dil — varsayılan Türkçe    │
-  └──────────────────────────────────────────────────────┘
+┌─ ALTYAZI GÖRÜNÜMÜ VE HIZ (Sağ Taraf) ─────────────────┐
+│ • Yazı Tipi & Renk: Turuncu ve Pembe dâhil 6 farklı   │
+│   okunabilir renk ve font seçeneği.                   │
+│ • Boyut: S, M, L butonları veya +/- ile ince ayar.    │
+│ • Tarama Hızı: Kaydırma çubuğu (Slider) ile 0.1 sn    │
+│   ile 3.0 sn arasında hız ayarı yapabilirsiniz.       │
+│   (Önerilen: 0.50 saniye)                             │
+└───────────────────────────────────────────────────────┘
 
-  ┌─ ALTYAZI GÖRÜNÜMÜ ────────────────────────────────────┐
-  │  Yazı Tipi   : Segoe UI önerilir (Windows uyumlu)     │
-  │  Renk        : Sarı — en okunabilir                   │
-  │               Beyaz — parlak sahnelerde kaybolabilir  │
-  │  Altyazı     : S(14) / M(18) / L(24) / XL(32)        │
-  │  Boyutu        Büyük ekran için XL seçin              │
-  │  + / −       : Piksel piksel ince ayar                │
-  │  B Butonu    : Kalın yazı aç/kapat                    │
-  └──────────────────────────────────────────────────────┘
-
-  ┌─ ARAYÜZ ÖLÇEĞİ ──────────────────────────────────────┐
-  │  4K / 2K ekran kullanıyorsanız "Büyük" veya "Dev"    │
-  │  seçin — tüm arayüz orantılı büyür.                  │
-  │  Full HD için "Normal" yeterlidir.                    │
-  └──────────────────────────────────────────────────────┘
-
-  ┌─ TARAMA HIZI ─────────────────────────────────────────┐
-  │  Yavaş  : 1.0 sn aralık — düşük CPU kullanımı        │
-  │  Normal : 0.5 sn — standart kullanım (önerilen)       │
-  │  Hızlı  : 0.25 sn — hızlı diyaloğa yetişir           │
-  │  Süper  : 0.1 sn — maksimum, yüksek CPU kullanımı    │
-  └──────────────────────────────────────────────────────┘
-
-  ┌─ KISAYOLLAR ──────────────────────────────────────────┐
-  │  Referans için listelenmiştir, ayarlanamaz.           │
-  └──────────────────────────────────────────────────────┘
-
+┌─ ÜST ÇUBUK VE YAN MENÜ ───────────────────────────────┐
+│ • UI Ölçeği: 4K ekranlar için arayüzü XL yapabilirsiniz.│
+│ • Tema: 🌙 Koyu / ☀️ Açık mod geçişi.                 │
+│ • Kısayollar (Sol Menü): Kısayolları tamamen          │
+│   kapatabilir veya açabilirsiniz.                     │
+│ • Kaydet: Ayarlarınızı bir sonraki açılış için saklar.│
+└───────────────────────────────────────────────────────┘
 
 ─────────────────────────────────────────────────────────
-  BÖLÜM 6: OCR MOTORU SEÇİMİ (Ana Ekran Ortası)
+BÖLÜM 5: OCR MOTORU SEÇİMİ (Animasyonlu Alt Panel)
 ─────────────────────────────────────────────────────────
 
-  Üç motor arasından biri seçilir. Gri görünen motorlar
-  henüz kurulmamış demektir — tıklanamaz.
+"⚙ OCR MOTORU & ÇEVİRİ SİSTEMİ" başlığına tıklayarak paneli açın.
+Motorlar çalışmıyorken SARI (Hazır), çalışırken YEŞİL (Aktif) yanar. Aktif çeviri varken motor değiştirilemez.
 
-  ┌─ Windows OCR (Her zaman hazır) ──────────────────────┐
-  │  • Kurulum gerektirmez, anında çalışır               │
-  │  • CPU %1-2, RAM ~50 MB kullanır                     │
-  │  • İnternet gerektirmez                              │
-  │  • Standart fontlarda güvenilir                      │
-  │  • Süslü/grafik fontlarda zorlanabilir               │
-  └──────────────────────────────────────────────────────┘
+Windows OCR (💨)
+• Kurulum gerektirmez, anında çalışır. Çok düşük RAM kullanır.
+• Standart ve net oyun fontları için en iyi ve en hızlı çözümdür.
 
-  ┌─ EasyOCR GPU (Kurulum gerektirir) ───────────────────┐
-  │  • NVIDIA ekran kartı gereklidir                     │
-  │  • Kurulum: Kur butonuna tıklayın (~2.5 GB indirir)  │
-  │  • GPU %40-80, VRAM ~1.5 GB kullanır                 │
-  │  • En yüksek OCR doğruluğu — grafik fontlar dahil   │
-  │  • İlk yüklemede ~20 saniye bekleme olur             │
-  └──────────────────────────────────────────────────────┘
+EasyOCR GPU (⚡)
+• NVIDIA Ekran Kartı gerektirir. Süslü ve zorlu fontları mükemmel okur.
+• İlk kez kullanmak için paneldeki "⬇ Kur" butonuna basmanız gerekir.
+• Arka planda kütüphaneleri otomatik indirir (~2.5 GB). Kurulum sonrası kullanıma açılır.
 
-  ┌─ Yerel AI (Kurulum gerektirir) ──────────────────────┐
-  │  • İnternet bağımsız ÇEVIRI motoru (OCR değil)      │
-  │  • Kurulum: Kur butonuna tıklayın (~1.2 GB indirir)  │
-  │  • CPU %5-15 veya GPU %10-30 kullanır               │
-  │  • Kurulduktan sonra tamamen çevrimdışı çalışır      │
-  └──────────────────────────────────────────────────────┘
-
+Hibrit OCR (🔀)
+• İki motorun gücünü birleştirir.
+• Standart Mod: Sadece Windows OCR okuyamadığında EasyOCR'ı yardıma çağırır (Tasarruflu).
+• Agresif Mod: İkisini aynı anda çalıştırır ve en kaliteli metni seçer (Performanslı).
 
 ─────────────────────────────────────────────────────────
-  BÖLÜM 7: EN VERİMLİ KULLANIM İÇİN TAVSİYELER
+BÖLÜM 6: ÇEVİRİ GEÇMİŞİ VE OVERLAY (Ekrana Yazdırma)
 ─────────────────────────────────────────────────────────
 
-  SENARYO A — Siyah şeritli altyazı (ör: Cyberpunk 2077)
-    1. Oyun ayarları → Altyazı Arka Planı: Açık / Opak
-    2. Altyazı boyutunu orta-büyük yapın
-    3. Bölge seçerken şeritli alana sığın, dışarı taşmayın
-    4. Motor: Windows OCR yeterlidir
-    5. Tarama hızı: Normal
+• Şelale (Waterfall) Altyazı:
+Oyun içindeki çeviriler ekrana 3 satır halinde yansır. Yeni çeviri en altta parlak olarak belirir, öncekiler yavaşça soluklaşarak yukarı kayar ve süre bitince ekrandan kaybolur. Ekranda çıkan yazıyı farenizle tutup istediğiniz yere sürükleyebilirsiniz.
 
-  SENARYO B — Arka plansız, sahne üstü yazı
-    1. Altyazı rengi: Sarı seçin (beyaz kaybolabilir)
-    2. Motor: EasyOCR GPU varsa onu seçin
-    3. Tarama hızı: Hızlı (kaçan satırları yakalar)
-    4. Bölge seçimini harf yüksekliğinden biraz geniş yapın
-
-  GENEL
-    • "Çeviri Geçmişi" paneli — tekrar okumanız gereken
-      satırlar için kaydırarak bakabilirsiniz
-    • Overlay metnini sürükleyerek istediğiniz konuma
-      taşıyabilirsiniz
-    • Ctrl+3 ile overlay'i merkeze sıfırlayabilirsiniz
-    • Ayarlarınızı "Ayarları Kaydet" ile kaydedin —
-      program her açılışta bu ayarları yükler
-
+• Çeviri Geçmişi Paneli:
+Ara sahnelerde hızlı geçen veya kaçırdığınız uzun diyalogları, arayüzün en altındaki "📜 ÇEVİRİ GEÇMİŞİ" panelinden fare tekerleği ile kaydırarak okuyabilirsiniz.
 
 ─────────────────────────────────────────────────────────
-  BÖLÜM 8: SIKÇA SORULAN SORULAR
+BÖLÜM 7: KISAYOL TUŞLARI
 ─────────────────────────────────────────────────────────
 
-  S: Program açılıyor ama çeviri gelmiyor.
-  C: Ctrl+1 ile bölge seçtiğinizden emin olun.
-     Ardından Ctrl+2 ile başlatın.
+Ctrl+1  → Çevrilecek ekran bölgesini seç (Mouse ile çiz)
+Ctrl+2  → Çeviriyi Başlat / Durdur
+Ctrl+3  → Ekranda kaybolan çeviri yazısını ekranın altına ortala
+Ctrl+Q  → Programı güvenli bir şekilde kapat
 
-  S: Altyazı gözüküyor ama hep aynı satır kalıyor.
-  C: TextStabilizer çalışıyor olabilir (konsensüs bekliyor).
-     3-4 saniye bekleyin, yeni satır gelince güncellenir.
+─────────────────────────────────────────────────────────
+BÖLÜM 8: SIKÇA SORULAN SORULAR
+─────────────────────────────────────────────────────────
 
-  S: Çeviri yanlış veya saçma çıkıyor.
-  C: OCR yanlış okuyor demektir. Bölge seçimini daraltın
-     ve EasyOCR GPU motorunu deneyin.
+S: Çeviriyi başlattım ama ekrana yazı gelmiyor.
+C: Ctrl+1 ile seçtiğiniz alanda okunabilir bir metin olmayabilir. Seçimi sadece metni kapsayacak şekilde yenileyin. En iyi sonuç için oyun ayarlarından altyazı arka planını (siyah şerit) açın.
 
-  S: Program çok yavaş / donuyor.
-  C: Tarama hızını "Yavaş" veya "Normal" yapın.
+S: Altyazı ekranda takılı kaldı, aynı cümle çevriliyor.
+C: Gelişmiş "Text Stabilizer" devrede. Ekranda yeni bir diyalog veya hareket algılayana kadar aynı çeviriyi ekranda tutar, farklı bir diyalog geldiğinde anında güncellenir.
 
-  S: Windows "bilinmeyen yayıncı" uyarısı veriyor.
-  C: Normal — "Yine de çalıştır"a tıklayın.
-     Bu program dijital imzalı değildir, bu normaldir.
+S: EasyOCR'ı kurmaya basıyorum ama CMD ekranı veya hata çıkıyor.
+C: Kurulum internet hızınıza bağlı olarak birkaç dakika sürebilir. İlerleme çubuğunu (Progress Bar) takip edin. Eğer iptal etmek isterseniz aynı butona "⛔ İptal" olarak tekrar basabilirsiniz, sistem değişiklikleri geri alacaktır.
 
-  S: Keyboard hatası çıkıyor, kısayollar çalışmıyor.
-  C: calistir.vbs yerine tam_kurulum.bat dosyasını
-     "Yönetici olarak çalıştır" ile başlatın.
-
+S: Kısayol tuşları (Ctrl+1 vb.) oyun içinde çalışmıyor.
+C: Programı mutlaka yönetici olarak çalıştırdığınızdan emin olun veya sol taraftaki ayarlar menüsünden Kısayolların "Açık" (Yeşil) durumda olduğunu kontrol edin.
 
 ========================================================
-  Oyun Çeviri Motoru v2.0 — Tüm hakları saklıdır
-========================================================
+Oyun Çeviri Motoru v1.0 — İyi Oyunlar!

@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 title Oyun Ceviri Motoru - Akilli Kurulum
-cd /d "%~dp0"
+cd /d "%~dp0" 
 chcp 65001 >nul
 
 echo =====================================================
